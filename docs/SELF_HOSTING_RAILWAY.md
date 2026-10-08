@@ -34,6 +34,12 @@ under `api/coach/core/`. Using `/frontend` or `/web` as its root breaks the Dock
 Leave the start commands empty so Railway uses the Docker images' own entrypoint and CMD.
 In particular, the default API image runs `node server.js` and does not contain npm.
 
+The API Dockerfile must not contain a Docker `VOLUME` instruction, even in its unused Coach
+stage: Railway rejects the entire file before building the default target. Persistent storage
+is attached through Railway's volume settings instead. If your branch still declares
+`VOLUME ["/coach-auth"]`, update it before deploying; the optional Coach cache remains mounted
+explicitly by Docker Compose.
+
 Attach the API volume **before its first deployment**, with at least **1 GB** available. The
 API's default upload free-space floor is 512 MiB, so a smaller volume can refuse every upload.
 The volume contains accounts, credentials, workouts, the session secret, push keys and uploads.
@@ -137,6 +143,7 @@ continue to work. The new runtime settings can also be set in Compose's `.env`.
 
 | Symptom | Check |
 |---|---|
+| `dockerfile invalid: docker VOLUME ... is not supported` | Deploy the updated API Dockerfile without `VOLUME` instructions; attach `/data` through Railway's volume settings |
 | Build cannot find frontend or coach files | web's root must be the repository root |
 | Railway healthcheck fails | web has both `PORT=3000` and `NGINX_PORT=3000`; api is running and `/api/health` returns 200 |
 | `/api/` hangs or returns 502 | `RESOLVER=auto`, `RESOLVER_IPV6=on`, and the private `BACKEND` reference; both services are in the same environment |
