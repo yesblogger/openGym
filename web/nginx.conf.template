@@ -13,6 +13,18 @@ map $request_uri $api_request_uri {
     "~^\Q${BASE_PATH}\E(?<api_request_rest>/.*)$" $api_request_rest;
 }
 
+# Only trust Railway's overwritten edge headers when the operator opts in. Client-supplied
+# X-Forwarded-For is never appended or forwarded. A missing edge header uses the real peer.
+map "${TRUST_RAILWAY_PROXY}:$http_x_real_ip" $api_client_ip {
+    default $remote_addr;
+    "~^1:(?<railway_client_ip>.+)$" $railway_client_ip;
+}
+map "${TRUST_RAILWAY_PROXY}:$http_x_forwarded_proto" $api_client_proto {
+    default $scheme;
+    "1:https" https;
+    "1:http" http;
+}
+
 server {
     listen ${NGINX_PORT};
     root /usr/share/nginx/html;
@@ -32,6 +44,9 @@ server {
     add_header Referrer-Policy "same-origin" always;
     add_header Content-Security-Policy "frame-ancestors 'none'" always;
 
+    resolver ${RESOLVER} valid=10s ipv6=${RESOLVER_IPV6};
+    include /etc/nginx/conf.d/media-cdn.locations;
+
     # API → backend container.
     # `^~` so this prefix beats the regex locations below: without it a request for a path such
     # as /api/anything.json would be matched by the \.(js|css|json|html)$ block instead and be
@@ -49,22 +64,21 @@ server {
         # RESOLVER defaults to Docker's embedded DNS, which is where this image usually runs.
         # Nothing answers on that address outside Docker, and an unreachable resolver does not
         # fail fast — every /api request hangs until it times out. Anywhere else, set RESOLVER to
-        # the DNS the platform actually provides: on Kubernetes that is the kube-dns/CoreDNS
-        # service address (`kubectl -n kube-system get svc kube-dns`, commonly 10.96.0.10).
-        resolver ${RESOLVER} valid=10s ipv6=off;
+        # the DNS the platform actually provides, or RESOLVER=auto to read /etc/resolv.conf.
+        # RESOLVER_IPV6=on also permits an IPv6-only backend (legacy Railway environments).
         set $api_upstream http://${BACKEND}:${PORT};
         # With a URI after the host, a proxy_pass built from variables sends that URI verbatim;
         # an empty one (the map's no-match case) sends the request's own target, as before.
         proxy_pass $api_upstream$api_request_uri;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        # $remote_addr, NOT $proxy_add_x_forwarded_for: the latter APPENDS to whatever the client
+        proxy_set_header X-Real-IP $api_client_ip;
+        # NOT $proxy_add_x_forwarded_for: that APPENDS to whatever the client
         # sent, and the API reads the first entry — so a client could put any address it liked in
         # front of its own and choose what the activity log recorded about it. Overwriting is what
         # makes the header mean anything.
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $api_client_ip;
+        proxy_set_header X-Forwarded-Proto $api_client_proto;
         # Same reasoning, and the API trusts this one FIRST. Empty by default, which drops the
         # header entirely, so a direct client cannot forge it. Cloudflare users set
         # CF_CONNECTING_IP=$http_cf_connecting_ip to let the real one through — correct only when
@@ -88,16 +102,15 @@ server {
         proxy_buffering off;
         proxy_read_timeout 300s;
         proxy_send_timeout 300s;
-        resolver ${RESOLVER} valid=10s ipv6=off;
         set $api_upstream http://${BACKEND}:${PORT};
         # The same mapped target as the block above: under a prefix the upload has to reach the
         # API's /api/media/... route too.
         proxy_pass $api_upstream$api_request_uri;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $api_client_ip;
+        proxy_set_header X-Forwarded-For $api_client_ip;
+        proxy_set_header X-Forwarded-Proto $api_client_proto;
         proxy_set_header CF-Connecting-IP "${CF_CONNECTING_IP}";
     }
 

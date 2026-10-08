@@ -1,0 +1,61 @@
+# Built-in exercise media stays on the app's origin so the installed PWA's media cache works.
+# Custom exercise uploads stay on /api/media/, handled by the API rather than this CDN.
+location ^~ ${BASE_PATH}/img/ {
+    set $media_upstream ${MEDIA_CDN_BASE};
+    rewrite ^\Q${BASE_PATH}\E/img/(.*)$ /images/$1 break;
+    proxy_pass $media_upstream$uri$is_args$args;
+    proxy_set_header Host ${MEDIA_CDN_AUTHORITY};
+    proxy_ssl_server_name on;
+    proxy_ssl_name ${MEDIA_CDN_HOST};
+    proxy_ssl_verify on;
+    proxy_ssl_verify_depth 3;
+    proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+    # Only the headers needed for media downloads reach the CDN, never session credentials
+    # or Railway's client-IP headers. Preserve ranges and conditional image requests.
+    proxy_pass_request_headers off;
+    proxy_set_header Range $http_range;
+    proxy_set_header If-Range $http_if_range;
+    proxy_set_header If-None-Match $http_if_none_match;
+    proxy_set_header If-Modified-Since $http_if_modified_since;
+    proxy_hide_header Set-Cookie;
+    proxy_hide_header Cache-Control;
+    proxy_hide_header Expires;
+    proxy_hide_header X-Frame-Options;
+    proxy_hide_header X-Content-Type-Options;
+    proxy_hide_header Referrer-Policy;
+    proxy_hide_header Content-Security-Policy;
+    add_header Cache-Control "public, max-age=2592000, immutable";
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "same-origin" always;
+    add_header Content-Security-Policy "frame-ancestors 'none'" always;
+}
+
+location ^~ ${BASE_PATH}/gif/ {
+    set $media_upstream ${MEDIA_CDN_BASE};
+    rewrite ^\Q${BASE_PATH}\E/gif/(.*)$ /videos/$1 break;
+    proxy_pass $media_upstream$uri$is_args$args;
+    proxy_set_header Host ${MEDIA_CDN_AUTHORITY};
+    proxy_ssl_server_name on;
+    proxy_ssl_name ${MEDIA_CDN_HOST};
+    proxy_ssl_verify on;
+    proxy_ssl_verify_depth 3;
+    proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+    proxy_pass_request_headers off;
+    proxy_set_header Range $http_range;
+    proxy_set_header If-Range $http_if_range;
+    proxy_set_header If-None-Match $http_if_none_match;
+    proxy_set_header If-Modified-Since $http_if_modified_since;
+    proxy_hide_header Set-Cookie;
+    proxy_hide_header Cache-Control;
+    proxy_hide_header Expires;
+    proxy_hide_header X-Frame-Options;
+    proxy_hide_header X-Content-Type-Options;
+    proxy_hide_header Referrer-Policy;
+    proxy_hide_header Content-Security-Policy;
+    add_header Cache-Control "public, max-age=2592000, immutable";
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "same-origin" always;
+    add_header Content-Security-Policy "frame-ancestors 'none'" always;
+}

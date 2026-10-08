@@ -136,7 +136,8 @@ the exercise media (about 140 MB) once.
 To reach it from your phone with passkeys you need HTTPS on a domain; that's a two-line change in
 `.env`. The [self-hosting guide](docs/SELF_HOSTING.md) walks through Cloudflare Tunnel, Caddy,
 Traefik and nginx, and there are separate guides for
-[HTTPS on a LAN](docs/SELF_HOSTING_HTTPS.md) and [Kubernetes](docs/SELF_HOSTING_KUBERNETES.md).
+[HTTPS on a LAN](docs/SELF_HOSTING_HTTPS.md), [Kubernetes](docs/SELF_HOSTING_KUBERNETES.md)
+and [Railway](docs/SELF_HOSTING_RAILWAY.md).
 
 > [!NOTE]
 > Images are published from the same tag to `registry.gitlab.com/duartesantos8/opengym/{api,web}`
@@ -155,6 +156,10 @@ Traefik and nginx, and there are separate guides for
 | `NGINX_PORT` | Port the web container listens on inside the container | `80` |
 | `BACKEND` | Name of the API service that `/api` is proxied to | `api` |
 | `PORT` | Port the API listens on; the web container proxies to the same value | `3000` |
+| `RESOLVER` | nginx DNS server(s); `auto` discovers the platform's nameservers at startup | `127.0.0.11` |
+| `RESOLVER_IPV6` | Resolve IPv6 backend addresses as well as IPv4 | `off` |
+| `TRUST_RAILWAY_PROXY` | Trust Railway's overwritten client-IP and HTTPS edge headers | `0` |
+| `MEDIA_CDN_BASE` | HTTPS dataset base for the same-origin built-in media proxy | *(empty; local media)* |
 | `RP_NAME` | Name shown in the passkey prompt | `openGym` |
 | `SESSION_DAYS` | How long a sign-in lasts, in days | `90` |
 | `ADMIN_UIDS` | User ids that get the admin dashboard, comma-separated | *(none)* |

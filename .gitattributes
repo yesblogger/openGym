@@ -1,0 +1,3 @@
+# Linux container entrypoints must also execute from Windows checkouts.
+web/*.sh text eol=lf
+web/*.envsh text eol=lf

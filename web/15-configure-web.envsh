@@ -1,0 +1,54 @@
+#!/bin/sh
+# Sourced by nginx's entrypoint before 20-envsubst-on-templates.sh, so discovered DNS and
+# CDN settings are available when it renders the templates. Compose keeps its old defaults.
+set -eu
+
+web_config_error() {
+    echo "openGym web: $*" >&2
+    exit 1
+}
+
+if [ "${RESOLVER:-127.0.0.11}" = auto ]; then
+    RESOLVER=$(awk '$1 == "nameserver" {
+        if (index($2, ":")) printf "[%s] ", $2;
+        else printf "%s ", $2;
+    }' /etc/resolv.conf)
+    [ -n "$RESOLVER" ] || web_config_error 'RESOLVER=auto found no nameservers in /etc/resolv.conf'
+fi
+export RESOLVER="${RESOLVER:-127.0.0.11}"
+
+RESOLVER_IPV6=${RESOLVER_IPV6:-off}
+case "$RESOLVER_IPV6" in
+    on|off) ;;
+    *) web_config_error 'RESOLVER_IPV6 must be on or off' ;;
+esac
+export RESOLVER_IPV6
+
+TRUST_RAILWAY_PROXY=${TRUST_RAILWAY_PROXY:-0}
+case "$TRUST_RAILWAY_PROXY" in
+    0|1) ;;
+    *) web_config_error 'TRUST_RAILWAY_PROXY must be 0 or 1' ;;
+esac
+export TRUST_RAILWAY_PROXY
+
+# The optional locations are rendered to a .locations file, not a .conf: nginx includes them
+# inside the app's server block. With no CDN configured the include is empty and media stays
+# on disk. Use nginx's own template-dir setting so the startup step can also be tested alone.
+web_template_dir=${NGINX_ENVSUBST_TEMPLATE_DIR:-/etc/nginx/templates}
+MEDIA_CDN_BASE=${MEDIA_CDN_BASE:-}
+MEDIA_CDN_BASE=${MEDIA_CDN_BASE%/}
+MEDIA_CDN_HOST=''
+MEDIA_CDN_AUTHORITY=''
+if [ -n "$MEDIA_CDN_BASE" ]; then
+    # Only an HTTPS origin and path, without a query, fragment or userinfo. Besides catching
+    # typos, this keeps a value inserted into nginx's configuration from becoming a directive.
+    printf '%s\n' "$MEDIA_CDN_BASE" | LC_ALL=C grep -Eq '^https://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]+)?(/[A-Za-z0-9._~!@%+,/-]+)*$' \
+        || web_config_error 'MEDIA_CDN_BASE must be an HTTPS hostname and optional path, without a query or fragment'
+    web_cdn_address=${MEDIA_CDN_BASE#https://}
+    MEDIA_CDN_AUTHORITY=${web_cdn_address%%/*}
+    MEDIA_CDN_HOST=${MEDIA_CDN_AUTHORITY%%:*}
+    cp "$web_template_dir/media-cdn.locations.template.disabled" "$web_template_dir/media-cdn.locations.template"
+else
+    : > "$web_template_dir/media-cdn.locations.template"
+fi
+export MEDIA_CDN_BASE MEDIA_CDN_HOST MEDIA_CDN_AUTHORITY

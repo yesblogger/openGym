@@ -49,6 +49,8 @@ COPY web/nginx.conf.template /etc/nginx/templates/default.conf.template
 # of a server that 404s under the prefix. nginx's entrypoint runs these scripts in order; 05 is
 # before the template rendering at 20.
 COPY --chmod=755 web/05-check-base-path.sh /docker-entrypoint.d/
+COPY --chmod=755 web/15-configure-web.envsh /docker-entrypoint.d/
+COPY web/media-cdn.locations.template /etc/nginx/templates/media-cdn.locations.template.disabled
 COPY --from=build /app/frontend/dist /usr/share/nginx/html
 # exercise media (img/gif) is mounted at runtime from the media volume
 
@@ -59,8 +61,13 @@ ENV PORT=3000
 # The DNS nginx asks about BACKEND on every /api request. Docker's embedded resolver by
 # default, which is correct for compose. Nothing listens on it elsewhere, and an unreachable
 # resolver makes every /api request hang rather than fail, so any other runtime has to say
-# what its DNS is: on Kubernetes, the kube-dns/CoreDNS service address (commonly 10.96.0.10).
+# what its DNS is, or set RESOLVER=auto to discover it from /etc/resolv.conf at start-up.
 ENV RESOLVER=127.0.0.11
+ENV RESOLVER_IPV6=off
+# Off unless Railway's HTTPS edge is the trusted proxy in front of this service.
+ENV TRUST_RAILWAY_PROXY=0
+# Empty keeps serving mounted media. An HTTPS dataset base enables the same-origin CDN proxy.
+ENV MEDIA_CDN_BASE=""
 # Empty = the CF-Connecting-IP header is dropped before it reaches the API, so it cannot be
 # forged by a direct client. Set to $http_cf_connecting_ip only when Cloudflare is really in
 # front. Defined here too, not just in compose, so the template always renders for anyone

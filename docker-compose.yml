@@ -87,6 +87,9 @@ services:
       - PORT=${PORT:-3000}
       # Docker's embedded DNS. Only ever needs changing on a runtime that is not Docker.
       - RESOLVER=${RESOLVER:-127.0.0.11}
+      - RESOLVER_IPV6=${RESOLVER_IPV6:-off}
+      - TRUST_RAILWAY_PROXY=${TRUST_RAILWAY_PROXY:-0}
+      - MEDIA_CDN_BASE=${MEDIA_CDN_BASE:-}
       # Empty drops the CF-Connecting-IP header, so a direct client cannot forge the address
       # the activity log records. Cloudflare users set CF_CONNECTING_IP=$$http_cf_connecting_ip.
       - CF_CONNECTING_IP=${CF_CONNECTING_IP:-}

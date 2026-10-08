@@ -18,7 +18,8 @@ This guide takes you from "just cloned it" to "using it from my phone over the i
 - [Troubleshooting](#troubleshooting)
 
 HTTPS on a LAN without a public domain has [its own guide](SELF_HOSTING_HTTPS.md), and so does
-[Kubernetes](SELF_HOSTING_KUBERNETES.md). Short answers to common questions are in the [FAQ](FAQ.md).
+[Kubernetes](SELF_HOSTING_KUBERNETES.md) and [Railway](SELF_HOSTING_RAILWAY.md). Short answers to
+common questions are in the [FAQ](FAQ.md).
 
 ## 1. Run it locally (5 minutes)
 
@@ -452,7 +453,9 @@ recreated API container does not leave it proxying to a dead IP, and `127.0.0.11
 Docker answers those lookups. Nothing listens there on another runtime, and an unreachable
 resolver does not fail fast — every `/api` request hangs until it times out. On Kubernetes set
 it to the cluster DNS service address (`kubectl -n kube-system get svc kube-dns`, commonly
-`10.96.0.10`); under Podman, to whatever its network provides.
+`10.96.0.10`); under Podman, to whatever its network provides. Alternatively set `RESOLVER=auto`
+to discover the nameservers in `/etc/resolv.conf` when the web container starts. Set
+`RESOLVER_IPV6=on` if your backend also needs IPv6 DNS resolution (off by default).
 
 `SESSION_DAYS` is how long a browser sign-in and a phone pairing last, counted from when they
 were issued; lowering it never cuts an existing session short. A browser renews its session by
