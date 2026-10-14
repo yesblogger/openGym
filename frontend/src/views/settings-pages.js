@@ -129,6 +129,7 @@ export const SEARCH = [
   // Account
   { page: 'account', title: 'Sync now', icon: 'reset', tint: 'var(--acc)', kw: 'server sync upload refresh status connection', when: c => !!c.user && !c.demo && c.synced },
   { page: 'account', title: 'Passkeys', icon: 'fingerprint', tint: 'var(--acc)', kw: 'passkey security login', when: signedInWeb },
+  { page: 'account', title: 'MCP access tokens', icon: 'key', tint: 'var(--blue)', kw: 'codex ai client mcp token', when: c => signedInWeb(c) && c.mcpOn },
   { page: 'account', title: 'Add another device', icon: 'qr', tint: 'var(--blue)', kw: 'device link code phone computer', when: signedInWeb },
   { page: 'account', title: 'Pair the mobile app', icon: 'qr', tint: 'var(--blue)', kw: 'pair phone app android iphone', when: signedInWeb },
   { page: 'account', title: 'Password', icon: 'key', tint: 'var(--orange)', kw: 'password login', when: c => signedInWeb(c) && c.pwOn },

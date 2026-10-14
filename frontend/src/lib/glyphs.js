@@ -9,7 +9,8 @@
 
 import { ICON_NAMES } from '../components/Icon.jsx'
 
-export const DEFAULT_GLYPH = 'figureStrength'
+import { DEFAULT_GLYPH } from './glyph-default.js'
+export { DEFAULT_GLYPH }
 
 // The picker offers glyphs that describe a TRAINING DAY — the split, the kit, or
 // the kind of session. The first version offered trophy/medal/crown/flag/star,

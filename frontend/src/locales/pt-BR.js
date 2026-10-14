@@ -1403,6 +1403,21 @@ export const PT_BR_OVERRIDES = {
   'Gentle, for headphones or a quiet room.': 'Suave, para fones de ouvido ou um lugar silencioso.',
   'Fewer than two workouts in this period. Pick a longer one.': 'Menos de dois treinos neste período. Escolha um mais longo.',
   'Releases are checked on GitHub. The download is verified against its checksum before the installer opens.': 'As versões são verificadas no GitHub. O download é conferido pela soma de verificação antes de abrir o instalador.',
+  // MCP access.
+  "MCP access tokens": "Tokens de acesso MCP",
+  "Connect an AI client to this profile. Tokens expire after 90 days. Revoking a token ends its access immediately.": "Conecte um cliente de IA a este perfil. Os tokens expiram após 90 dias. Revogar um token encerra seu acesso imediatamente.",
+  "Copy this token now. It will not be shown again.": "Copie este token agora. Ele não será mostrado novamente.",
+  "Access token": "Token de acesso",
+  "Copy token": "Copiar token",
+  "Could not copy the token.": "Não foi possível copiar o token.",
+  "Token name": "Nome do token",
+  "Read only": "Somente leitura",
+  "Read and write": "Leitura e escrita",
+  "Create token": "Criar token",
+  "No active MCP tokens.": "Nenhum token MCP ativo.",
+  "Expires {0}": "Expira em {0}",
+  "Revoke": "Revogar",
+  "Connect Codex or another AI client to this profile.": "Conecte o Codex ou outro cliente de IA a este perfil.",
 }
 
 export default { ...pt, ...PT_BR_OVERRIDES }

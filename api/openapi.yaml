@@ -219,6 +219,8 @@ paths:
         `password_login`, which is there only when `PASSWORD_LOGIN=1`, and `default_lang`,
         which is there only when `DEFAULT_LANG` is set.
 
+        `mcp_enabled: true` is present only when MCP_ENABLED=1.
+
         `media` is there unless the instance runs with `MEDIA_UPLOADS=0`, for everybody: the
         caps are not a secret, and its absence is how the app knows this server does not
         store photos and videos at all.
@@ -241,6 +243,7 @@ paths:
               schema:
                 type: object
                 properties:
+                  mcp_enabled: { type: boolean, const: true }
                   invite_only:
                     type: boolean
                     description: When true, registration requires a valid invite code.
@@ -1409,6 +1412,133 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
               example: { error: "credential already registered", code: "credential-exists" }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /api/account/mcp-tokens:
+    get:
+      tags: [data]
+      operationId: listMcpTokens
+      summary: List this profile's active MCP tokens
+      description: Requires MCP_ENABLED=1 and an ordinary signed-in session. Never returns token secrets or hashes.
+      responses:
+        '200':
+          description: Active tokens owned by this profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tokens]
+                properties:
+                  tokens:
+                    type: array
+                    items: { $ref: '#/components/schemas/McpToken' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: MCP is disabled. }
+        '503': { description: Token store unreadable. }
+    post:
+      tags: [data]
+      operationId: createMcpToken
+      summary: Create a 90-day profile-scoped MCP token
+      description: Requires an ordinary session and the existing browser CSRF check. The secret appears only in this response. At most 20 active tokens per profile.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, access]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 80 }
+                access: { type: string, enum: [read, write], description: Write access includes read access. }
+      responses:
+        '201':
+          description: Token metadata and the one-time secret. Save locally outside source control.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/McpToken' }
+                  - type: object
+                    required: [token]
+                    properties:
+                      token: { type: string }
+        '400': { description: Invalid name/access or too many tokens. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Browser origin refused. }
+        '404': { description: MCP is disabled. }
+        '503': { description: Token store unreadable or persistence failed. }
+    delete:
+      tags: [data]
+      operationId: revokeMcpToken
+      summary: Immediately revoke one of this profile's MCP tokens
+      parameters:
+        - in: query
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Revoked; returns ok true. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Browser origin refused. }
+        '404': { description: MCP disabled or no matching token owned by this profile. }
+        '503': { description: Revocation could not be persisted. }
+
+  /api/mcp/data:
+    get:
+      tags: [data]
+      operationId: getMcpData
+      summary: Read the MCP token owner's profile snapshot
+      security: [{ mcpAuth: [] }]
+      description: Requires MCP_ENABLED=1 and read scope. Tokens are invalid after expiry, revocation, account disable/delete or sign-out-everywhere. No caller-supplied user ID is accepted. Ordinary session cookies and mobile session tokens cannot authenticate this route.
+      responses:
+        '200':
+          description: Minimal user metadata, token scopes, nullable state and revision. The state includes sync metadata and media references for lossless writes; MCP tools never expose private media.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user, scopes, state, rev]
+                properties:
+                  user:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      name: { type: string }
+                      created: { type: [string, 'null'] }
+                  scopes:
+                    type: array
+                    items: { type: string, enum: [read, write] }
+                  state: { type: [object, 'null'], additionalProperties: true }
+                  rev: { type: integer, minimum: 0 }
+        '401': { description: Missing or invalid MCP token. }
+        '404': { description: MCP disabled. }
+        '503': { description: Profile or token store unreadable. }
+    put:
+      tags: [data]
+      operationId: putMcpData
+      summary: Conditionally save the MCP token owner's profile
+      security: [{ mcpAuth: [] }]
+      description: Uses the same synchronous compare-and-write as PUT /api/data, including stamps, resets, write ancestry and media bookkeeping. Both baseRev and baseWid are mandatory. baseWid is null only when the snapshot has no write ID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [state, baseRev, baseWid]
+              properties:
+                state: { type: object, additionalProperties: true }
+                baseRev: { type: integer, minimum: 0 }
+                baseWid: { type: [string, 'null'] }
+                stamped: { type: boolean }
+      responses:
+        '200':
+          description: Durably saved; returns ok, ts, rev and wid, as PUT /api/data.
+        '400': { description: Invalid state or missing conditional-write fields. }
+        '401': { description: Missing or invalid MCP token. }
+        '403': { description: Read-only MCP token. }
+        '404': { description: MCP disabled. }
+        '409': { description: Snapshot is stale; returns current state and revision. }
+        '503': { description: Profile or token store unreadable. }
 
   /api/data:
     get:
@@ -2955,6 +3085,10 @@ paths:
 
 components:
   securitySchemes:
+    mcpAuth:
+      type: http
+      scheme: bearer
+      description: Profile-scoped MCP access token; accepted only by /api/mcp/data.
     cookieAuth:
       type: apiKey
       in: cookie
@@ -3099,6 +3233,17 @@ components:
           example: { error: "that code is wrong, used or expired", code: "link-invalid" }
 
   schemas:
+    McpToken:
+      type: object
+      required: [id, name, scopes, created, expires]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        scopes:
+          type: array
+          items: { type: string, enum: [read, write] }
+        created: { type: integer, description: Unix timestamp in milliseconds. }
+        expires: { type: integer, description: Unix timestamp in milliseconds. }
     Error:
       type: object
       required: [error]

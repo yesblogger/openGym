@@ -1,0 +1,35 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createMcpTokenStore, MCP_TOKEN_TTL } from '../mcp-tokens.js';
+
+test('MCP tokens persist only hashes, bind a profile/version, expire, and revoke', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gym-mcp-token-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let now = 1000;
+  const store = createMcpTokenStore(dir, () => now);
+  const a = { id: 'a', sv: 0 }, b = { id: 'b' };
+  const token = store.create(a, 'Codex', 'write');
+  assert.deepEqual(store.authenticate(token.token, [a, b]), { user: a, scopes: ['read', 'write'] });
+  assert.equal(fs.readFileSync(path.join(dir, 'tokens.json'), 'utf8').includes(token.token), false);
+  assert.equal('hash' in store.list(a)[0], false);
+  assert.deepEqual(store.list(b), []);
+  assert.equal(store.revoke(b, token.id), false);
+  assert.equal(store.authenticate(token.token + 'x', [a]), null);
+  assert.equal(store.authenticate(token.token, [{ ...a, disabled: true }]), null);
+  assert.equal(store.authenticate(token.token, [{ ...a, sv: 1 }]), null);
+  assert.equal(store.authenticate(token.token, [b]), null);
+  now += MCP_TOKEN_TTL;
+  assert.equal(store.authenticate(token.token, [a]), null);
+  const readonly = store.create(a, 'Read', 'read');
+  assert.deepEqual(store.authenticate(readonly.token, [a]).scopes, ['read']);
+  assert.equal(store.revoke(a, readonly.id), true);
+  assert.equal(store.authenticate(readonly.token, [a]), null);
+  assert.throws(() => store.create(a, '', 'write'));
+  fs.writeFileSync(path.join(dir, 'tokens.json'), '{broken');
+  assert.throws(() => store.list(a), /unreadable/);
+  assert.throws(() => store.create(a, 'test', 'read'), /unreadable/);
+  assert.equal(fs.readFileSync(path.join(dir, 'tokens.json'), 'utf8'), '{broken');
+});

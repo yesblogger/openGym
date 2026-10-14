@@ -177,5 +177,8 @@ test('the three hot-path state reads all go through readStateCached', () => {
   // thing, uncached.
   // (readStateStrict: a file that cannot be read is a 503, not an empty profile.)
   assert.match(handler('GET /api/data'), /readStateStrict\(user\.id\)/);
-  assert.match(handler('PUT /api/data'), /readStateStrict\(user\.id\)/);
+  for (const key of ['PUT /api/data', 'PUT /api/mcp/data']) assert.match(handler(key), /putProfileState\(/);
+  const write = src.slice(src.indexOf('function putProfileState('), src.indexOf('/* ---------- push notifications'));
+  assert.match(write, /readStateStrict\(user\.id\)/);
+  assert.match(write, /stateCache\.delete\(user\.id\)/);
 });

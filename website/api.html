@@ -245,7 +245,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <p class="api-facts">
     <span>OpenAPI 3.1.0</span>
     <span>openGym v1.4.1</span>
-    <span>69 endpoints</span>
+    <span>74 endpoints</span>
     <span>AGPL-3.0-or-later</span>
   </p>
 
@@ -333,6 +333,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   </summary>
   <div class="ep-body">
 <p>The flags the login screen needs before anyone is signed in. Both reflect environment variables on the server (<code>INVITE_ONLY</code>, <code>ALLOW_GUEST</code>), and so does <code>password_login</code>, which is there only when <code>PASSWORD_LOGIN=1</code>, and <code>default_lang</code>, which is there only when <code>DEFAULT_LANG</code> is set.</p>
+<p><code>mcp_enabled: true</code> is present only when MCP_ENABLED=1.</p>
 <p><code>media</code> is there unless the instance runs with <code>MEDIA_UPLOADS=0</code>, for everybody: the caps are not a secret, and its absence is how the app knows this server does not store photos and videos at all.</p>
 <p>A caller with a valid session also gets a <code>coach</code> key: the block when the instance has the AI Coach switched on <b>and</b> a provider connected, and <code>null</code> when it has not. A caller with no session gets no key at all. The block names the provider this instance talks to, which is the same fact <code>GET /api/coach/disclosure</code> will not hand out unauthenticated.</p>
 <p>The key is always present for a session, <code>null</code> included, so a client that caches this answer can tell &quot;no Coach on this instance&quot; from &quot;you were not signed in when you asked&quot; and knows whether asking again would change it.</p>
@@ -343,7 +344,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <div class="ptab">
   <div class="prow rrow">
     <span class="r-code s2">200</span>
-    <span class="p-desc">Instance flags, plus the Coach block for a signed-in caller.<span class="r-sig">{ invite_only: boolean, allow_guest: boolean, coach: object | null, password_login: always true, default_lang: string, media: <a href="#schema-MediaConfig">MediaConfig</a> }</span></span>
+    <span class="p-desc">Instance flags, plus the Coach block for a signed-in caller.<span class="r-sig">{ mcp_enabled: always true, invite_only: boolean, allow_guest: boolean, coach: object | null, password_login: always true, default_lang: string, media: <a href="#schema-MediaConfig">MediaConfig</a> }</span></span>
   </div>
     </div>
   </div>
@@ -1456,6 +1457,238 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <h2>Data</h2>
   <p class="sub">Per-user state sync (the whole app state as one JSON blob)</p>
   <div class="eps">
+
+<details class="ep" id="op-listMcpTokens">
+  <summary>
+    <span class="m get">GET</span>
+    <span class="ep-path"><code>/api/account/mcp-tokens</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">List this profile's active MCP tokens</span>
+  </summary>
+  <div class="ep-body">
+<p>Requires MCP_ENABLED=1 and an ordinary signed-in session. Never returns token secrets or hashes.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Active tokens owned by this profile.<span class="r-sig">{ tokens: <a href="#schema-McpToken">McpToken</a>[] }</span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">MCP is disabled.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">Token store unreadable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-createMcpToken">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/account/mcp-tokens</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Create a 90-day profile-scoped MCP token</span>
+  </summary>
+  <div class="ep-body">
+<p>Requires an ordinary session and the existing browser CSRF check. The secret appears only in this response. At most 20 active tokens per profile.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">name<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(&le; 80 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">access<em class="p-req" title="required">required</em></span>
+    <span class="p-type">&quot;read&quot; | &quot;write&quot;</span>
+    <span class="p-desc">Write access includes read access.</span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">201</span>
+    <span class="p-desc">Token metadata and the one-time secret. Save locally outside source control.<span class="r-sig">object</span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Invalid name/access or too many tokens.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">403</span>
+    <span class="p-desc">Browser origin refused.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">MCP is disabled.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">Token store unreadable or persistence failed.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-revokeMcpToken">
+  <summary>
+    <span class="m delete">DELETE</span>
+    <span class="ep-path"><code>/api/account/mcp-tokens</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Immediately revoke one of this profile's MCP tokens</span>
+  </summary>
+  <div class="ep-body">
+
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">id<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Revoked; returns ok true.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">403</span>
+    <span class="p-desc">Browser origin refused.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">MCP disabled or no matching token owned by this profile.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">Revocation could not be persisted.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-getMcpData">
+  <summary>
+    <span class="m get">GET</span>
+    <span class="ep-path"><code>/api/mcp/data</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Read the MCP token owner's profile snapshot</span>
+  </summary>
+  <div class="ep-body">
+<p>Requires MCP_ENABLED=1 and read scope. Tokens are invalid after expiry, revocation, account disable/delete or sign-out-everywhere. No caller-supplied user ID is accepted. Ordinary session cookies and mobile session tokens cannot authenticate this route.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Minimal user metadata, token scopes, nullable state and revision. The state includes sync metadata and media references for lossless writes; MCP tools never expose private media.<span class="r-sig">{ user: object, scopes: (&quot;read&quot; | &quot;write&quot;)[], state: object | null, rev: integer <span class="p-hint">(0&ndash;)</span> }</span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">Missing or invalid MCP token.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">MCP disabled.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">Profile or token store unreadable.</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-putMcpData">
+  <summary>
+    <span class="m put">PUT</span>
+    <span class="ep-path"><code>/api/mcp/data</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Conditionally save the MCP token owner's profile</span>
+  </summary>
+  <div class="ep-body">
+<p>Uses the same synchronous compare-and-write as PUT /api/data, including stamps, resets, write ancestry and media bookkeeping. Both baseRev and baseWid are mandatory. baseWid is null only when the snapshot has no write ID.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">state<em class="p-req" title="required">required</em></span>
+    <span class="p-type">object</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">baseRev<em class="p-req" title="required">required</em></span>
+    <span class="p-type">integer <span class="p-hint">(0&ndash;)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">baseWid<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string | null</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">stamped</span>
+    <span class="p-type">boolean</span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Durably saved; returns ok, ts, rev and wid, as PUT /api/data.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Invalid state or missing conditional-write fields.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">Missing or invalid MCP token.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">403</span>
+    <span class="p-desc">Read-only MCP token.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">MCP disabled.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">Snapshot is stale; returns current state and revision.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">Profile or token store unreadable.</span>
+  </div>
+    </div>
+  </div>
+</details>
 
 <details class="ep" id="op-getData">
   <summary>
@@ -3165,6 +3398,44 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
        is <b>representative, not enforced</b>: the server stores it opaquely and the app
        grows it over time.</p>
     <div class="eps">
+
+<details class="ep sch" id="schema-McpToken">
+  <summary>
+    <span class="sch-name"><code>McpToken</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum"></span>
+  </summary>
+  <div class="ep-body">
+
+<div class="ptab">
+  <div class="prow">
+    <span class="p-name">id<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">name<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">scopes<em class="p-req" title="required">required</em></span>
+    <span class="p-type">(&quot;read&quot; | &quot;write&quot;)[]</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">created<em class="p-req" title="required">required</em></span>
+    <span class="p-type">integer</span>
+    <span class="p-desc">Unix timestamp in milliseconds.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">expires<em class="p-req" title="required">required</em></span>
+    <span class="p-type">integer</span>
+    <span class="p-desc">Unix timestamp in milliseconds.</span>
+  </div>
+</div>
+  </div>
+</details>
 
 <details class="ep sch" id="schema-Error">
   <summary>

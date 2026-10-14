@@ -3,6 +3,10 @@
    tool call without a restart. */
 import fs from 'node:fs'
 import path from 'node:path'
+import { AsyncLocalStorage } from 'node:async_hooks'
+
+const remoteState = new AsyncLocalStorage()
+export const withRemoteState = (snapshot, run) => remoteState.run(snapshot, run)
 
 const DATA_DIR = process.env.OPENGYM_DATA || path.join(process.cwd(), 'data')
 
@@ -103,6 +107,10 @@ export function init() {
       _state = undefined
       _loadedMtime = 0
     })
+    // Windows can report an asynchronous EPERM after an atomic rename or a removed directory.
+    // The mtime fallback remains authoritative when watching stops working.
+    const watcher = _watcher
+    watcher.on('error', () => { watcher.close(); if (_watcher === watcher) _watcher = null })
     // Unref'd, or the watcher alone holds the event loop open and the process outlives the
     // client that spawned it — "exits when the LLM client disconnects" stops being true the
     // moment there is a state file to watch. Most clients kill the child anyway, but one that
@@ -114,6 +122,10 @@ export function init() {
 
 // Returns the state object, or null for a fresh account that never signed in on a device.
 export function getState() {
+  const remote = remoteState.getStore()
+  // A token already identifies a signed-in profile. A missing document is its empty history;
+  // the API rejects corrupt files before constructing this snapshot.
+  if (remote) return Object.assign({}, defaultsShape(), remote.state || {})
   init()
   const file = stateFile(_uid)
   // Re-read if the file's mtime changed since our last load — covers watcher omissions and
@@ -138,6 +150,8 @@ export function getState() {
 
 // Returns the user record (id + name). No passkey material, no VAPID keys, no push subs.
 export function getUser() {
+  const remote = remoteState.getStore()
+  if (remote) return remote.user
   init()
   const u = _db.users.find(x => x.id === _uid) || { id: _uid, name: 'Profile', created: null }
   return { id: u.id, name: u.name, created: u.created || null }

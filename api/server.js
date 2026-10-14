@@ -34,6 +34,7 @@ import { createMediaStore, mediaLimits, mediaConfig, MediaError, HASH_RE } from 
 import { effectiveRoutineId } from './queue.js';
 import { stampPut } from './sync-stamps.js';
 import { atomicWrite as durableWrite } from './durable.js';
+import { createMcpTokenStore } from './mcp-tokens.js';
 import { excusedOn, nudgeFor, nudgeWindowOpen, toneOf } from './nudge.js';
 
 const PORT = +(process.env.PORT || 3000);
@@ -69,6 +70,8 @@ const ALLOW_GUEST = !/^(0|false|no|off)$/i.test(process.env.ALLOW_GUEST || '');
 // Name-and-password sign-in next to passkeys (#118). Off by default: it adds a second way into
 // every account that opts in, so an instance has to ask for it. While it is off every password
 // route answers 404 and the app shows none of it; hashes already stored stay where they are.
+const MCP_ENABLED = /^(1|true|yes|on)$/i.test(process.env.MCP_ENABLED || '');
+const MCP_TOKENS = createMcpTokenStore(DATA);
 const PASSWORD_LOGIN = /^(1|true|yes|on)$/i.test(process.env.PASSWORD_LOGIN || '');
 // The language the sign-in screen, and every profile that never picked one, starts in (#303) —
 // for an instance whose people share a language. Only a tag's shape is checked here; the app
@@ -107,7 +110,7 @@ fs.mkdirSync(DATA, { recursive: true });
  * reason to refuse to boot. The privilege drop in adapters/spawn.js is the control that does
  * fail closed. */
 const lock = f => { try { fs.chmodSync(path.join(DATA, f), 0o600); } catch { /* not present yet, or host says no */ } };
-['secret', 'db.json', 'coach.json'].forEach(lock);
+['secret', 'db.json', 'coach.json', 'tokens.json'].forEach(lock);
 
 /* ---------- secret + db ---------- */
 const secretFile = path.join(DATA, 'secret');
@@ -189,7 +192,10 @@ function readStateStrict(uid) {
   let raw;
   try { raw = fs.readFileSync(stateFile(uid), 'utf8'); }
   catch (e) { return e.code === 'ENOENT' ? null : UNREADABLE; }
-  try { return JSON.parse(raw); } catch { return UNREADABLE; }
+  try {
+    const state = JSON.parse(raw);
+    return state && typeof state === 'object' && !Array.isArray(state) ? state : UNREADABLE;
+  } catch { return UNREADABLE; }
 }
 // A stored document as a client gets it: without the server's own notes `_unstamped` and `_prior`.
 function forClient(S) {
@@ -207,6 +213,104 @@ function forClient(S) {
 // there is the honest reading of such a file — what was dropped carried nothing to show.
 const record = x => !!x && typeof x === 'object' && !Array.isArray(x);
 const records = v => (Array.isArray(v) ? v.filter(record) : []);
+
+
+// Shared synchronous compare-and-write for browser and MCP clients.
+function putProfileState(user, body, res, conditional = false) {
+  if (conditional && (!Number.isInteger(body.baseRev) || body.baseRev < 0 || !Object.hasOwn(body, 'baseWid') || !(body.baseWid === null || typeof body.baseWid === 'string'))) return json(res, 400, { error: 'baseRev and baseWid required' });
+  if (!body.state || typeof body.state !== 'object') return json(res, 400, { error: 'state required' });
+  // An object with nothing of the profile in it empties the document with the counter left
+  // intact: what lands on disk is `{"_rev":n+1}`, every routine, workout and weigh-in gone, and
+  // the next poll reports a revision the client accepts as its own. `_rev` and `_ts` do not
+  // count towards "something of the profile" — both are bookkeeping this route writes or echoes
+  // itself, so `{}` and `{"_rev":5}` are the same push and get the same refusal. Nothing
+  // shipped sends either: the web and mobile clients push a state built on DEF
+  // (frontend/src/store/useStore.js), which always carries its keys. An array is a document
+  // loss of its own and is left to the `invalid state` check below, which already refuses it.
+  if (!Array.isArray(body.state) && !Object.keys(body.state).some(k => k !== '_rev' && k !== '_ts')) {
+    return json(res, 400, { error: 'state required' });
+  }
+  // The reminder tick and the admin routes iterate these two on the server's side, so a truthy
+  // non-array would throw there on every pass for as long as it sat on disk. Absent or null is
+  // fine — every client fills its own defaults. An array is `typeof 'object'` but no document:
+  // `_rev` set on it is dropped by JSON.stringify, so the file would read back as rev 0 while
+  // the response claimed the next revision.
+  const list = v => v == null || Array.isArray(v);
+  if (Array.isArray(body.state) || !list(body.state.workouts) || !list(body.state.routines)) return json(res, 400, { error: 'invalid state' });
+  // The same readers walk every entry (`w.d`, `w.name`). They skip what is not an entry now
+  // (`records` above), but nothing should be storing one. Dropped, not refused:
+  // such an entry carries nothing worth keeping, whereas a 400 would strand a client whose own
+  // copy is already malformed — it keeps re-sending the same document and never syncs again.
+  for (const k of ['workouts', 'routines']) if (Array.isArray(body.state[k])) body.state[k] = records(body.state[k]);
+  // Conditional write: a `baseRev` that is not the current revision means this client last
+  // read an older document — another device has written since — and the copy it is about to
+  // push would silently drop that write. The current document travels back with the 409, so
+  // the client can merge and try again without a second request. No `baseRev` (a client from
+  // before revisions, or a deliberate replace such as a backup import) overwrites, as before.
+  // readState and atomicWrite are synchronous with nothing awaited between them, so the
+  // compare-and-write is atomic for this process.
+  const cur = readStateStrict(user.id);
+  if (cur === UNREADABLE) { console.error('state file unreadable for', user.id); return json(res, 503, { error: 'state unreadable' }); }
+  const curRev = cur?._rev || 0;
+  // `_rev` is a counter, so after the data directory went back in time (a restored backup, a
+  // write lost to a power cut) the same number names a different document. Every write also gets
+  // a write id (`_wid`) and keeps its ancestors' (`_wids`): a client quoting the id it last saw
+  // (`baseWid`) is refused when the stored document is not that one, whatever the numbers say,
+  // and a client reading a document can tell whether it descends from its own (useStore pullState).
+  if ((body.baseRev != null && body.baseRev !== curRev) ||
+      (body.baseRev != null && (conditional || typeof body.baseWid === 'string') && (cur?._wid || null) !== body.baseWid)) {
+    return json(res, 409, { error: 'conflict', rev: curRev, state: forClient(cur) });
+  }
+  delete body.state.active;              // in-progress workouts stay device-local
+  // "Reset everything" stamps the profile (`resetAt`, with `resetIds`: what it wiped). The stamp
+  // only moves forward: a write without it, or with an older one — a client from before it, a
+  // backup restored over the profile — keeps the stored stamp. Otherwise every device that saw
+  // the reset would take that copy for one older than the reset, and wipe it again on its next
+  // merge (frontend/src/lib/sync-merge.js).
+  const storedReset = Number(cur?.resetAt) || 0;
+  if (storedReset > (Number(body.state.resetAt) || 0)) {
+    body.state.resetAt = cur.resetAt;
+    if (cur.resetIds && typeof cur.resetIds === 'object') body.state.resetIds = cur.resetIds;
+    else delete body.state.resetIds;
+  }
+  // The records of removals and edits only grow, and what a writer that does not stamp its own
+  // changes (an older app, an API script) changed is stamped here, so it is neither wiped nor
+  // undone by the next device that merges (sync-stamps.js).
+  // A document nested too deep to compare is the bad request the stringify below refuses too.
+  const report = {};
+  try { stampPut(cur, body.state, { overRead: body.baseRev != null && body.baseRev === curRev, stamped: body.stamped === true, report }); }
+  catch (e) { if (e instanceof RangeError) return json(res, 400, { error: 'invalid state' }); throw e; }
+  body.state._rev = curRev + 1;          // server-owned; whatever the client sent is ignored
+  // A writer that does not stamp (an older app) takes the revision it is told for the document it
+  // sent, and only reads the profile again once the revision moves. When the server put back
+  // something it left out or set back (sync-stamps.js), the document stored is not that one: it
+  // goes in one revision further, so the writer's next check of the revision (every half minute)
+  // finds it moved and reads it, and its next push over the one it was told is a conflict to merge.
+  if (report.changed) body.state._rev = curRev + 2;
+  body.state._wids = [...(Array.isArray(cur?._wids) ? cur._wids : []), ...(cur?._wid ? [cur._wid] : [])]
+    .filter(x => typeof x === 'string').slice(-WID_KEEP);
+  body.state._wid = crypto.randomBytes(8).toString('hex');
+  // JSON.parse takes any nesting, JSON.stringify recurses and runs out of stack on a document
+  // nested some thousands deep. No client builds one; it is a bad request, not a server error.
+  let text;
+  try { text = JSON.stringify(body.state); }
+  catch (e) { if (e instanceof RangeError) return json(res, 400, { error: 'invalid state' }); throw e; }
+  atomicWrite(stateFile(user.id), text);
+  // The stat cache cannot see this write on its own: mtime granularity is 4 ms here (ext4 on
+  // this kernel — 3901 of 3999 back-to-back same-size writes shared one timestamp), and a
+  // `_rev` going from 7 to 8 does not change the file's size, so two writes inside one 4 ms
+  // tick are the same (mtimeMs, size) key. A reader that sampled between them would then serve
+  // the old revision until some later write happened to land on a different tick. This is the
+  // only writer of a state file in the tree, so evicting here is the whole fix.
+  stateCache.delete(user.id);
+  // Starts (or stops) the grace clock of every stored file this write stopped (or started)
+  // referencing. Bookkeeping only: the state is already saved, so nothing here may turn a
+  // successful write into an error.
+  if (MEDIA_ON) {
+    try { MEDIA.noteState(user.id, body.state); } catch (e) { console.error('media noteState', e); }
+  }
+  json(res, 200, { ok: true, ts: body.state._ts || null, rev: curRev + 1, wid: body.state._wid });
+}
 
 /* ---------- push notifications (Web Push / VAPID) ---------- */
 const vapidFile = path.join(DATA, 'vapid.json');
@@ -612,6 +716,18 @@ function sessionOf(req) {
 function readSession(req) {
   return sessionOf(req)?.user || null;
 }
+
+function requireMcp(req, res, scope) {
+  if (!MCP_ENABLED) { json(res, 404, { error: 'MCP disabled' }); return null; }
+  const header = req.headers.authorization || '';
+  let auth;
+  try { auth = MCP_TOKENS.authenticate(header.startsWith('Bearer ') ? header.slice(7).trim() : '', db.users); }
+  catch { json(res, 503, { error: 'MCP token store unreadable' }); return null; }
+  if (!auth) { json(res, 401, { error: 'invalid MCP token' }); return null; }
+  if (!auth.scopes.includes(scope)) { json(res, 403, { error: 'MCP write access required' }); return null; }
+  return auth;
+}
+
 // Guard for /api/admin/* — resolves the caller and 401/403s if they aren't an admin.
 function requireAdmin(req, res) {
   const user = readSession(req);
@@ -1934,6 +2050,7 @@ const routes = {
     // that has no Coach. The key's absence is that answer.
     json(res, 200, {
       invite_only: INVITE_ONLY, allow_guest: ALLOW_GUEST,
+      ...(MCP_ENABLED ? { mcp_enabled: true } : {}),
       // Only when on, so an instance without passwords answers exactly as it did before (#118).
       ...(PASSWORD_LOGIN ? { password_login: true } : {}),
       // Public: the sign-in screen is the first thing that reads it.
@@ -2171,6 +2288,57 @@ const routes = {
   // `_unstamped` is the server's note of what it stamped for an older app's last push
   // (sync-stamps.js ownRecord), `_prior` what each field held before (notePrior): read back only
   // by the next PUT, never sent to a client.
+
+  'GET /api/account/mcp-tokens': async (req, res) => {
+    if (!MCP_ENABLED) return json(res, 404, { error: 'MCP disabled' });
+    const user = readSession(req);
+    if (!user) return json(res, 401, { error: 'not signed in' });
+    try { json(res, 200, { tokens: MCP_TOKENS.list(user) }); }
+    catch (e) { json(res, e.status || 503, { error: e.message }); }
+  },
+  'POST /api/account/mcp-tokens': async (req, res) => {
+    if (!MCP_ENABLED) return json(res, 404, { error: 'MCP disabled' });
+    const user = readSession(req);
+    if (!user) return json(res, 401, { error: 'not signed in' });
+    const body = await readBody(req);
+    // A sign-out everywhere or account disable may have happened while the body streamed.
+    if (readSession(req) !== user) return json(res, 401, { error: 'not signed in' });
+    try {
+      const token = MCP_TOKENS.create(user, body.name, body.access);
+      audit(req, 'mcp.token.created', { user });
+      json(res, 201, token);
+    } catch (e) { json(res, e.status || 503, { error: e.status ? e.message : 'MCP token could not be saved' }); }
+  },
+  'DELETE /api/account/mcp-tokens': async (req, res) => {
+    if (!MCP_ENABLED) return json(res, 404, { error: 'MCP disabled' });
+    const user = readSession(req);
+    if (!user) return json(res, 401, { error: 'not signed in' });
+    const id = new URL(req.url, 'http://localhost').searchParams.get('id');
+    try {
+      if (!MCP_TOKENS.revoke(user, id)) return json(res, 404, { error: 'token not found' });
+      audit(req, 'mcp.token.revoked', { user });
+      json(res, 200, { ok: true });
+    } catch (e) { json(res, 503, { error: 'MCP token could not be revoked' }); }
+  },
+  'GET /api/mcp/data': async (req, res) => {
+    const auth = requireMcp(req, res, 'read');
+    if (!auth) return;
+    const state = readStateStrict(auth.user.id);
+    if (state === UNREADABLE) return json(res, 503, { error: 'state unreadable' });
+    notePull(auth.user);
+    json(res, 200, { user: { id: auth.user.id, name: auth.user.name, created: auth.user.created || null },
+      scopes: auth.scopes, state: forClient(state), rev: state?._rev || 0 });
+  },
+  'PUT /api/mcp/data': async (req, res) => {
+    const auth = requireMcp(req, res, 'write');
+    if (!auth) return;
+    const body = await readBody(req);
+    // Re-check after awaiting the body: revocation may have landed while it streamed.
+    const current = requireMcp(req, res, 'write');
+    if (!current) return;
+    return putProfileState(current.user, body, res, true);
+  },
+
   'GET /api/data': async (req, res) => {
     const user = readSession(req);
     if (!user) return json(res, 401, { error: 'not signed in' });
@@ -2196,98 +2364,7 @@ const routes = {
     const user = readSession(req);
     if (!user) return json(res, 401, { error: 'not signed in' });
     const body = await readBody(req);
-    if (!body.state || typeof body.state !== 'object') return json(res, 400, { error: 'state required' });
-    // An object with nothing of the profile in it empties the document with the counter left
-    // intact: what lands on disk is `{"_rev":n+1}`, every routine, workout and weigh-in gone, and
-    // the next poll reports a revision the client accepts as its own. `_rev` and `_ts` do not
-    // count towards "something of the profile" — both are bookkeeping this route writes or echoes
-    // itself, so `{}` and `{"_rev":5}` are the same push and get the same refusal. Nothing
-    // shipped sends either: the web and mobile clients push a state built on DEF
-    // (frontend/src/store/useStore.js), which always carries its keys. An array is a document
-    // loss of its own and is left to the `invalid state` check below, which already refuses it.
-    if (!Array.isArray(body.state) && !Object.keys(body.state).some(k => k !== '_rev' && k !== '_ts')) {
-      return json(res, 400, { error: 'state required' });
-    }
-    // The reminder tick and the admin routes iterate these two on the server's side, so a truthy
-    // non-array would throw there on every pass for as long as it sat on disk. Absent or null is
-    // fine — every client fills its own defaults. An array is `typeof 'object'` but no document:
-    // `_rev` set on it is dropped by JSON.stringify, so the file would read back as rev 0 while
-    // the response claimed the next revision.
-    const list = v => v == null || Array.isArray(v);
-    if (Array.isArray(body.state) || !list(body.state.workouts) || !list(body.state.routines)) return json(res, 400, { error: 'invalid state' });
-    // The same readers walk every entry (`w.d`, `w.name`). They skip what is not an entry now
-    // (`records` above), but nothing should be storing one. Dropped, not refused:
-    // such an entry carries nothing worth keeping, whereas a 400 would strand a client whose own
-    // copy is already malformed — it keeps re-sending the same document and never syncs again.
-    for (const k of ['workouts', 'routines']) if (Array.isArray(body.state[k])) body.state[k] = records(body.state[k]);
-    // Conditional write: a `baseRev` that is not the current revision means this client last
-    // read an older document — another device has written since — and the copy it is about to
-    // push would silently drop that write. The current document travels back with the 409, so
-    // the client can merge and try again without a second request. No `baseRev` (a client from
-    // before revisions, or a deliberate replace such as a backup import) overwrites, as before.
-    // readState and atomicWrite are synchronous with nothing awaited between them, so the
-    // compare-and-write is atomic for this process.
-    const cur = readStateStrict(user.id);
-    if (cur === UNREADABLE) { console.error('state file unreadable for', user.id); return json(res, 503, { error: 'state unreadable' }); }
-    const curRev = cur?._rev || 0;
-    // `_rev` is a counter, so after the data directory went back in time (a restored backup, a
-    // write lost to a power cut) the same number names a different document. Every write also gets
-    // a write id (`_wid`) and keeps its ancestors' (`_wids`): a client quoting the id it last saw
-    // (`baseWid`) is refused when the stored document is not that one, whatever the numbers say,
-    // and a client reading a document can tell whether it descends from its own (useStore pullState).
-    if ((body.baseRev != null && body.baseRev !== curRev) ||
-        (body.baseRev != null && typeof body.baseWid === 'string' && cur?._wid && body.baseWid !== cur._wid)) {
-      return json(res, 409, { error: 'conflict', rev: curRev, state: forClient(cur) });
-    }
-    delete body.state.active;              // in-progress workouts stay device-local
-    // "Reset everything" stamps the profile (`resetAt`, with `resetIds`: what it wiped). The stamp
-    // only moves forward: a write without it, or with an older one — a client from before it, a
-    // backup restored over the profile — keeps the stored stamp. Otherwise every device that saw
-    // the reset would take that copy for one older than the reset, and wipe it again on its next
-    // merge (frontend/src/lib/sync-merge.js).
-    const storedReset = Number(cur?.resetAt) || 0;
-    if (storedReset > (Number(body.state.resetAt) || 0)) {
-      body.state.resetAt = cur.resetAt;
-      if (cur.resetIds && typeof cur.resetIds === 'object') body.state.resetIds = cur.resetIds;
-      else delete body.state.resetIds;
-    }
-    // The records of removals and edits only grow, and what a writer that does not stamp its own
-    // changes (an older app, an API script) changed is stamped here, so it is neither wiped nor
-    // undone by the next device that merges (sync-stamps.js).
-    // A document nested too deep to compare is the bad request the stringify below refuses too.
-    const report = {};
-    try { stampPut(cur, body.state, { overRead: body.baseRev != null && body.baseRev === curRev, stamped: body.stamped === true, report }); }
-    catch (e) { if (e instanceof RangeError) return json(res, 400, { error: 'invalid state' }); throw e; }
-    body.state._rev = curRev + 1;          // server-owned; whatever the client sent is ignored
-    // A writer that does not stamp (an older app) takes the revision it is told for the document it
-    // sent, and only reads the profile again once the revision moves. When the server put back
-    // something it left out or set back (sync-stamps.js), the document stored is not that one: it
-    // goes in one revision further, so the writer's next check of the revision (every half minute)
-    // finds it moved and reads it, and its next push over the one it was told is a conflict to merge.
-    if (report.changed) body.state._rev = curRev + 2;
-    body.state._wids = [...(Array.isArray(cur?._wids) ? cur._wids : []), ...(cur?._wid ? [cur._wid] : [])]
-      .filter(x => typeof x === 'string').slice(-WID_KEEP);
-    body.state._wid = crypto.randomBytes(8).toString('hex');
-    // JSON.parse takes any nesting, JSON.stringify recurses and runs out of stack on a document
-    // nested some thousands deep. No client builds one; it is a bad request, not a server error.
-    let text;
-    try { text = JSON.stringify(body.state); }
-    catch (e) { if (e instanceof RangeError) return json(res, 400, { error: 'invalid state' }); throw e; }
-    atomicWrite(stateFile(user.id), text);
-    // The stat cache cannot see this write on its own: mtime granularity is 4 ms here (ext4 on
-    // this kernel — 3901 of 3999 back-to-back same-size writes shared one timestamp), and a
-    // `_rev` going from 7 to 8 does not change the file's size, so two writes inside one 4 ms
-    // tick are the same (mtimeMs, size) key. A reader that sampled between them would then serve
-    // the old revision until some later write happened to land on a different tick. This is the
-    // only writer of a state file in the tree, so evicting here is the whole fix.
-    stateCache.delete(user.id);
-    // Starts (or stops) the grace clock of every stored file this write stopped (or started)
-    // referencing. Bookkeeping only: the state is already saved, so nothing here may turn a
-    // successful write into an error.
-    if (MEDIA_ON) {
-      try { MEDIA.noteState(user.id, body.state); } catch (e) { console.error('media noteState', e); }
-    }
-    json(res, 200, { ok: true, ts: body.state._ts || null, rev: curRev + 1, wid: body.state._wid });
+    return putProfileState(user, body, res);
   },
 
   'GET /api/push/public-key': async (req, res) => json(res, 200, { key: vapid.publicKey }),

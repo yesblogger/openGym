@@ -159,3 +159,25 @@ Railway references: [Docker services](https://docs.railway.com/guides/docker-com
 [healthchecks](https://docs.railway.com/deployments/healthchecks),
 [volumes](https://docs.railway.com/volumes/reference), and
 [Serverless](https://docs.railway.com/deployments/serverless).
+
+## MCP access from Codex Desktop
+
+Enable `MCP_ENABLED=1` on **api** after deploying the MCP-capable API and web images. The existing
+private API, public web origin and `/data` volume are sufficient; no extra Railway service is
+required. Back up the complete `/data` directory before upgrading.
+
+Sign in to web and create a token under **Settings → Account → MCP access tokens**. Each profile
+manages its own tokens; choose Read and write for workout logging, weigh-ins, routine creation
+and editing, and schedule changes. Secrets are shown once, expire after 90 days, and can be
+revoked immediately. Disable `MCP_ENABLED` to stop all MCP access.
+
+Run the Node stdio bridge locally on the Codex computer with `OPENGYM_URL` set to web's public
+HTTPS URL and `OPENGYM_TOKEN` forwarded from the environment. It calls `/api/mcp/data` through
+web's existing `/api/` proxy. API continues to own all profile writes and conflict checks;
+no volume is shared with the computer. Keep `OPENGYM_DATA` and `OPENGYM_UID` unset in remote mode.
+See [the MCP guide](../mcp/README.md#railway-and-other-remote-instances-readwrite) for Windows
+Codex configuration and error handling.
+
+Verify with a disposable profile: list routines, search an exercise, create/edit a routine,
+assign/override a day, log a historical workout and weigh-in, then read the results in OpenGym.
+Redeploy API and confirm the profile and token still work. Revoke the token after verification.
