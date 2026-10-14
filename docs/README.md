@@ -12,7 +12,7 @@ Pick the part that matches what you're doing. If you just have a question, try t
 | [Importing data](DATA_IMPORTS.md) | You're coming from FitNotes, Strong, Hevy or Apple Health, or sharing a plan with someone |
 | [AI coach](AI_COACH.md) | Your instance has the coach switched on and you want to know what it sees and can change |
 
-The [live demo](https://opengym.duarte-santos.ch/demo/) is the real app with example data, nothing
+The [live demo](https://opengym.ch/demo/) is the real app with example data, nothing
 to install.
 
 ## Hosting it
@@ -25,6 +25,7 @@ to install.
 | [Railway](SELF_HOSTING_RAILWAY.md) | You want the web and API containers hosted on Railway with persistent data |
 | [AI coach](AI_COACH.md) | You're deciding whether to turn the coach on, and with which provider |
 | [MCP server](../mcp/README.md) | You want Claude Desktop, Cursor or another AI client to read your training history |
+| [NixOS](NIX.md) | You run NixOS and want openGym native — flake packages and a NixOS module, no Docker |
 | [Security](../SECURITY.md) | You host it for other people, or want to report a vulnerability |
 
 All settings live in `.env`; [`.env.example`](../.env.example) explains each one, and the
