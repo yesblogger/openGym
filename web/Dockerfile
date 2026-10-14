@@ -44,6 +44,7 @@ FROM nginxinc/nginx-unprivileged:alpine
 # template. The static tree keeps the default modes; uid 101 only reads it.
 USER root
 RUN apk upgrade --no-cache \
+ && mkdir -p /etc/nginx/templates \
  && sed -i '/^[[:space:]]*user[[:space:]]/d' /etc/nginx/nginx.conf \
  && sed -i 's,\(/var\)\{0\,1\}/run/nginx.pid,/tmp/nginx.pid,' /etc/nginx/nginx.conf \
  && if ! grep -q 'client_body_temp_path' /etc/nginx/nginx.conf; then \
